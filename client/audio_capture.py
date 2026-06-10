@@ -11,6 +11,7 @@ Sin reproducción (eso va en PlaybackEngine).
 
 import asyncio
 import collections
+import logging
 import threading
 from typing import Optional
 
@@ -18,6 +19,8 @@ import numpy as np
 import pyaudio
 
 from config import AudioConfig
+
+logger = logging.getLogger(__name__)
 
 
 def _int16_to_float32(data: bytes) -> bytes:
@@ -33,7 +36,7 @@ class AudioCapture:
         self._cfg = cfg
         self._pa: Optional[pyaudio.PyAudio] = None
         self._stream: Optional[pyaudio.Stream] = None
-        self._queue: asyncio.Queue[bytes] = asyncio.Queue()
+        self._queue: Optional[asyncio.Queue[bytes]] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._lock = threading.Lock()
 
@@ -51,6 +54,8 @@ class AudioCapture:
     async def start(self) -> None:
         """Abre el stream de captura y arranca el callback."""
         self._loop = asyncio.get_running_loop()
+        self._queue = asyncio.Queue()
+        logger.debug("AudioCapture iniciando (rate=%d, channels=%d)", self._cfg.sample_rate, self._cfg.channels)
         self._pa = pyaudio.PyAudio()
         self._stream = self._pa.open(
             format=pyaudio.paInt16,
@@ -64,6 +69,7 @@ class AudioCapture:
 
     async def stop(self) -> None:
         """Detiene y cierra el stream de captura."""
+        logger.debug("AudioCapture detenido")
         if self._stream is not None:
             self._stream.stop_stream()
             self._stream.close()
@@ -78,11 +84,14 @@ class AudioCapture:
 
     def get_queue(self) -> asyncio.Queue[bytes]:
         """Devuelve la queue donde se encolan los frames float32."""
+        if self._queue is None:
+            raise RuntimeError("AudioCapture.get_queue() llamado antes de start()")
         return self._queue
 
     def get_preroll(self) -> bytes:
         """Devuelve los últimos N segundos de audio como bytes float32 concatenados."""
-        return b"".join(self._preroll)
+        with self._lock:
+            return b"".join(self._preroll)
 
     def is_silence(self, frame: bytes) -> bool:
         """
@@ -107,7 +116,10 @@ class AudioCapture:
         status: int,
     ) -> tuple:
         float32_bytes = _int16_to_float32(in_data)
-        self._preroll.append(float32_bytes)
+        with self._lock:
+            self._preroll.append(float32_bytes)
         if self._loop is not None and not self._loop.is_closed():
             self._loop.call_soon_threadsafe(self._queue.put_nowait, float32_bytes)
+        else:
+            logger.warning("AudioCapture._callback: dropping frame (loop is None or closed)")
         return (None, pyaudio.paContinue)
