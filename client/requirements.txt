@@ -1,0 +1,7 @@
+# En Termux antes de crear el venv:
+#   pkg install python-numpy portaudio
+# (python-numpy via pkg para evitar compilar desde source en ARM)
+# (portaudio via pkg para que pyaudio pueda compilar con pip)
+pyaudio>=0.2.14
+websockets>=12.0
+pyyaml>=6.0
