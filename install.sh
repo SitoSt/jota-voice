@@ -19,7 +19,7 @@ fi
 _ok "Configuración válida"
 
 # ── Ejecutar pasos ────────────────────────────────────────────
-for step in install/*.sh; do
+for step in "$REPO_DIR"/install/*.sh; do
     name=$(basename "$step")
     echo ""
     echo "=== $name ==="
