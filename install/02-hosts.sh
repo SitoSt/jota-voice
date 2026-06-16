@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
-source ../lib/output.sh
-source ../lib/yaml.sh
+source "$REPO_DIR"/lib/output.sh
+source "$REPO_DIR"/lib/yaml.sh
 
 HOSTS_FILE="/data/data/com.termux/files/usr/etc/hosts"
 

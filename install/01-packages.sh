@@ -1,6 +1,6 @@
 #!/bin/sh
 set -e
-source ../lib/output.sh
+source "$REPO_DIR"/lib/output.sh
 
 PKGS="python python-numpy portaudio pulseaudio termux-api git openssh termux-tools ffmpeg rsync"
 

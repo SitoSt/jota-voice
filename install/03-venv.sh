@@ -1,6 +1,6 @@
 #!/bin/sh
 set -e
-source ../lib/output.sh
+source "$REPO_DIR"/lib/output.sh
 
 VENV="${REPO_DIR}/.venv"
 

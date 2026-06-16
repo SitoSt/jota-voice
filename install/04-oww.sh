@@ -1,6 +1,6 @@
 #!/bin/sh
 set -e
-source ../lib/output.sh
+source "$REPO_DIR"/lib/output.sh
 
 OWW_VENV="$HOME/oww-venv"
 OWW_MODEL="$HOME/.local/lib/python3.*/site-packages/wyoming_openwakeword/models/ok_nabu.tflite"

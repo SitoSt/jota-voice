@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
-source ../lib/output.sh
-source ../lib/yaml.sh
+source "$REPO_DIR"/lib/output.sh
+source "$REPO_DIR"/lib/yaml.sh
 
 _check() {
     [ -f "$HOME/supervisord.conf" ] && [ -f "$HOME/.jota-display-url" ]

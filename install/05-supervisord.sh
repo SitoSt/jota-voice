@@ -1,6 +1,6 @@
 #!/bin/sh
 set -e
-source ../lib/output.sh
+source "$REPO_DIR"/lib/output.sh
 
 _check() {
     command -v supervisord >/dev/null 2>&1
