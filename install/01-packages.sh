@@ -2,7 +2,7 @@
 set -e
 source ../lib/output.sh
 
-PKGS="python python-numpy portaudio pulseaudio termux-api git openssh termux-tools ffmpeg"
+PKGS="python python-numpy portaudio pulseaudio termux-api git openssh termux-tools ffmpeg rsync"
 
 _need_pkg() {
     pkg list-installed 2>/dev/null | grep -q "^$1/" && return 1 || return 0
