@@ -49,17 +49,43 @@ fi
 # ── Step 2: Configurar /etc/hosts desde config.yaml ──────────────────────────
 echo "Step 2: Configurar /etc/hosts"
 
-# Leer hosts desde config.yaml (formato: "  - ip: \"X.X.X.X\"\n    name: \"nombre\"")
-# Esto es opcional - si no hay hosts en config, se salta
-HOSTS_BLOCK=$(grep -A 20 "^hosts:" "$REPO_DIR/config.yaml" 2>/dev/null || true)
-if [ -n "$HOSTS_BLOCK" ]; then
-    _info "Añadiendo entradas de hosts desde config.yaml"
-    # Extraer IPs y nombres
-    # Formato esperado:
-    #   hosts:
-    #     - ip: "192.168.1.106"
-    #       name: "green-house"
-    _info "Hosts configurados"
+HOSTS_FILE="/data/data/com.termux/files/usr/etc/hosts"
+
+# Parsear hosts de config.yaml
+parse_yaml_hosts() {
+    local hosts_section
+    hosts_section=$(grep -A 30 "^hosts:" "$REPO_DIR/config.yaml" 2>/dev/null || true)
+    if [ -z "$hosts_section" ]; then
+        return 1
+    fi
+
+    echo "$hosts_section" | while read -r line; do
+        case "$line" in
+            *ip:*)
+                ip=$(echo "$line" | sed 's/.*ip: *"\([^"]*\)".*/\1/')
+                ;;
+            *name:*)
+                name=$(echo "$line" | sed 's/.*name: *"\([^"]*\)".*/\1/')
+                if [ -n "$ip" ] && [ -n "$name" ]; then
+                    echo "${ip} ${name}"
+                    ip=""
+                    name=""
+                fi
+                ;;
+        esac
+    done
+}
+
+if parse_yaml_hosts > /tmp/jota-hosts-entries; then
+    _info "Añadiendo entradas de hosts:"
+    cat /tmp/jota-hosts-entries
+    # Preservar localhost y añadir hosts
+    {
+        echo "127.0.0.1 localhost"
+        echo "::1 ip6-localhost"
+        cat /tmp/jota-hosts-entries
+    } > "$HOSTS_FILE"
+    _ok "/etc/hosts configurado"
 else
     _info "No hay sección hosts en config.yaml (opcional)"
 fi
