@@ -2,7 +2,6 @@
 # install.sh — Runner idempotente para setup de jota-voice en Termux
 # Ejecuta cada paso en install/ si no está ya hecho
 
-set -e
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 source "$REPO_DIR/lib/output.sh"
@@ -19,9 +18,20 @@ fi
 _ok "Configuración válida"
 
 # ── Ejecutar pasos ────────────────────────────────────────────
+_failed=0
 for step in "$REPO_DIR"/install/*.sh; do
     name=$(basename "$step")
     echo ""
     echo "=== $name ==="
-    . "$step"
+    if ! . "$step"; then
+        echo "  ⚠ $name falló (código: $?)"
+        _failed=1
+    fi
 done
+
+echo ""
+if [ "$_failed" -eq 0 ]; then
+    echo "✓ install.sh completado — todos los pasos exitosos"
+else
+    echo "⚠ install.sh completado con errores en algunos pasos"
+fi
