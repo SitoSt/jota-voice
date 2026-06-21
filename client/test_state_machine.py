@@ -125,6 +125,7 @@ def _make_oww_mock(wake_word: str = "ok_nabu") -> MagicMock:
     oww.send_audio = AsyncMock()
     oww.wait_for_detection = AsyncMock(return_value=wake_word)
     oww.connect_with_backoff = AsyncMock()
+    oww.disconnect = AsyncMock()
     return oww
 
 
@@ -140,6 +141,7 @@ def _gateway_mock_with_events(events: list[GatewayEvent]) -> MagicMock:
     gateway.disconnect = AsyncMock()
     gateway.send_audio = AsyncMock()
     gateway.send_end = AsyncMock()
+    gateway.send_text = AsyncMock()
     gateway.receive = _receive
     return gateway
 
@@ -148,6 +150,7 @@ def _make_playback_mock() -> MagicMock:
     playback = MagicMock()
     playback.push_token = MagicMock()
     playback.play_chunk = AsyncMock()
+    playback.play_notification = AsyncMock()
     playback.drain = AsyncMock()
     playback.reset = MagicMock()
     playback.close = MagicMock()
@@ -382,12 +385,83 @@ async def _run_error_test() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Test 3: timeout en IDLE — OWW nunca detecta, debe publicar error
+# ---------------------------------------------------------------------------
+
+async def _run_idle_timeout_test() -> None:
+    print("\n=== Test IDLE timeout: OWW nunca detecta → error publicado ===")
+
+    bus = EventBus()
+    cfg = Config(
+        gateway=GatewayConfig(host="127.0.0.1", client_key="test"),
+        oww=OWWConfig(idle_detection_timeout_s=0.1),  # timeout muy corto
+    )
+
+    oww = MagicMock()
+    oww.is_connected = False
+    oww.connect_with_backoff = AsyncMock()
+    oww.disconnect = AsyncMock()
+    oww.send_audio = AsyncMock()
+
+    async def _never_detect() -> str:
+        await asyncio.Event().wait()  # bloquea para siempre
+        return "never"
+
+    oww.wait_for_detection = _never_detect
+
+    audio = _make_audio_mock(silent=True)
+    gateway = _gateway_mock_with_events([])
+    playback = _make_playback_mock()
+
+    received: list[VoiceEvent] = []
+    stop_event = asyncio.Event()
+
+    async def _collector() -> None:
+        async for ev in bus.subscribe():
+            received.append(ev)
+            if ev.type == "error":
+                stop_event.set()
+
+    collector_task = asyncio.create_task(_collector())
+
+    from state_machine import run as sm_run
+
+    sm_task = asyncio.create_task(sm_run(cfg, bus, audio, oww, gateway, playback))
+
+    try:
+        await asyncio.wait_for(stop_event.wait(), timeout=3.0)
+    except asyncio.TimeoutError:
+        pass
+
+    sm_task.cancel()
+    try:
+        await sm_task
+    except asyncio.CancelledError:
+        pass
+
+    bus.close()
+    try:
+        await collector_task
+    except Exception:
+        pass
+
+    error_evs = [e for e in received if e.type == "error"]
+    assert len(error_evs) >= 1, (
+        f"Esperaba ≥1 evento error por timeout IDLE, recibí {len(error_evs)}\n"
+        f"Eventos: {[e.type for e in received]}"
+    )
+    print(f"  OK  error publicado: {error_evs[0].data['message']!r}")
+    print("Test IDLE timeout: PASADO")
+
+
+# ---------------------------------------------------------------------------
 # Entry points (pytest + ejecución directa)
 # ---------------------------------------------------------------------------
 
 async def _run_all() -> None:
     await _run_e2e_test()
     await _run_error_test()
+    await _run_idle_timeout_test()
     print("\n=== TODOS LOS TESTS PASARON ===")
 
 
@@ -399,6 +473,11 @@ def test_state_machine_e2e() -> None:
 def test_state_machine_error() -> None:
     """Compatible con pytest."""
     asyncio.run(_run_error_test())
+
+
+def test_state_machine_idle_timeout() -> None:
+    """Compatible con pytest."""
+    asyncio.run(_run_idle_timeout_test())
 
 
 if __name__ == "__main__":

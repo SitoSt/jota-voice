@@ -1,22 +1,24 @@
 """
-AudioCapture — captura de micrófono via PyAudio con pre-roll y VAD por RMS.
+AudioCapture — captura de micrófono via parec (PulseAudio) con pre-roll y VAD por RMS.
 
 Responsabilidades:
-  - PyAudio callback → asyncio.Queue (float32 bytes)
+  - Proceso parec → hilo lector → asyncio.Queue (float32 bytes)
   - Ring-buffer de pre-roll (últimos N segundos)
   - is_silence() por RMS
 
-Sin reproducción (eso va en PlaybackEngine).
+PyAudio/PortAudio en Termux/Android usa ALSA directamente y devuelve silencio.
+parec usa PulseAudio → OpenSL_ES_source → micrófono real.
 """
 
 import asyncio
 import collections
 import logging
+import os
+import subprocess
 import threading
 from typing import Optional
 
 import numpy as np
-import pyaudio
 
 from config import AudioConfig
 
@@ -34,11 +36,12 @@ class AudioCapture:
 
     def __init__(self, cfg: AudioConfig) -> None:
         self._cfg = cfg
-        self._pa: Optional[pyaudio.PyAudio] = None
-        self._stream: Optional[pyaudio.Stream] = None
+        self._proc: Optional[subprocess.Popen] = None
         self._queue: Optional[asyncio.Queue[bytes]] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._read_thread: Optional[threading.Thread] = None
 
         preroll_frames = int(
             cfg.preroll_seconds * cfg.sample_rate / cfg.frames_per_buffer
@@ -52,31 +55,48 @@ class AudioCapture:
     # ------------------------------------------------------------------
 
     async def start(self) -> None:
-        """Abre el stream de captura y arranca el callback."""
+        """Arranca parec y el hilo lector."""
         self._loop = asyncio.get_running_loop()
         self._queue = asyncio.Queue()
-        logger.debug("AudioCapture iniciando (rate=%d, channels=%d)", self._cfg.sample_rate, self._cfg.channels)
-        self._pa = pyaudio.PyAudio()
-        self._stream = self._pa.open(
-            format=pyaudio.paInt16,
-            channels=self._cfg.channels,
-            rate=self._cfg.sample_rate,
-            input=True,
-            frames_per_buffer=self._cfg.frames_per_buffer,
-            stream_callback=self._callback,
+        self._stop_event.clear()
+
+        pulse_path = os.environ.get("PULSE_RUNTIME_PATH", os.path.expanduser("~/.pulse"))
+        env = {**os.environ, "PULSE_RUNTIME_PATH": pulse_path}
+
+        cmd = [
+            "parec",
+            "--device=OpenSL_ES_source",
+            f"--rate={self._cfg.sample_rate}",
+            "--channels=1",
+            "--format=s16le",
+            "--latency-msec=50",
+        ]
+        logger.debug("AudioCapture: arrancando %s", " ".join(cmd))
+        self._proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env=env,
         )
-        self._stream.start_stream()
+        self._read_thread = threading.Thread(
+            target=self._read_loop, daemon=True, name="audio-capture"
+        )
+        self._read_thread.start()
 
     async def stop(self) -> None:
-        """Detiene y cierra el stream de captura."""
+        """Detiene el proceso parec y el hilo lector."""
         logger.debug("AudioCapture detenido")
-        if self._stream is not None:
-            self._stream.stop_stream()
-            self._stream.close()
-            self._stream = None
-        if self._pa is not None:
-            self._pa.terminate()
-            self._pa = None
+        self._stop_event.set()
+        if self._proc is not None:
+            try:
+                self._proc.terminate()
+                self._proc.wait(timeout=2.0)
+            except Exception:
+                self._proc.kill()
+            self._proc = None
+        if self._read_thread is not None:
+            self._read_thread.join(timeout=2.0)
+            self._read_thread = None
 
     # ------------------------------------------------------------------
     # Acceso a datos
@@ -105,21 +125,29 @@ class AudioCapture:
         return rms < self._cfg.vad_rms_threshold
 
     # ------------------------------------------------------------------
-    # Callback interno (hilo de PyAudio)
+    # Hilo lector
     # ------------------------------------------------------------------
 
-    def _callback(
-        self,
-        in_data: bytes,
-        frame_count: int,
-        time_info: dict,
-        status: int,
-    ) -> tuple:
-        float32_bytes = _int16_to_float32(in_data)
-        with self._lock:
-            self._preroll.append(float32_bytes)
-        if self._loop is not None and not self._loop.is_closed():
-            self._loop.call_soon_threadsafe(self._queue.put_nowait, float32_bytes)
-        else:
-            logger.warning("AudioCapture._callback: dropping frame (loop is None or closed)")
-        return (None, pyaudio.paContinue)
+    def _read_loop(self) -> None:
+        """Lee frames de parec y los encola en asyncio."""
+        bytes_per_frame = self._cfg.frames_per_buffer * 2  # int16 = 2 bytes/sample
+        _first = True
+        while not self._stop_event.is_set():
+            try:
+                in_data = self._proc.stdout.read(bytes_per_frame)
+            except Exception as exc:
+                logger.warning("AudioCapture._read_loop: error leyendo parec: %s", exc)
+                break
+            if not in_data:
+                logger.warning("AudioCapture._read_loop: parec cerró stdout")
+                break
+            float32_bytes = _int16_to_float32(in_data)
+            if _first:
+                arr = np.frombuffer(float32_bytes, np.float32)
+                rms = float(np.sqrt(np.mean(arr ** 2))) * 32768.0
+                logger.info("AudioCapture: primer frame de parec, RMS=%.1f", rms)
+                _first = False
+            with self._lock:
+                self._preroll.append(float32_bytes)
+            if self._loop is not None and not self._loop.is_closed():
+                self._loop.call_soon_threadsafe(self._queue.put_nowait, float32_bytes)

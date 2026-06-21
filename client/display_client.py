@@ -44,6 +44,9 @@ class DisplayClient:
 
         if event.type == "recording_started":
             state = "listening"
+        elif event.type == "transcription_partial":
+            state = "listening"
+            text = event.data.get("text", "")
         elif event.type == "transcription":
             state = "thinking"
             text = event.data.get("text", "")

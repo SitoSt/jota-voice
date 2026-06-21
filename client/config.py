@@ -24,6 +24,7 @@ class OWWConfig:
     port: int = 10401
     wake_words: List[str] = field(default_factory=lambda: ["ok_nabu"])
     reconnect_backoff_s: List[float] = field(default_factory=lambda: [5.0, 10.0, 20.0, 60.0])
+    idle_detection_timeout_s: float = 0.0  # 0.0 = sin timeout
 
 
 @dataclass
@@ -77,6 +78,7 @@ def _oww_from_dict(d: dict) -> OWWConfig:
         port=int(d.get("port", 10401)),
         wake_words=list(d.get("wake_words", ["ok_nabu"])),
         reconnect_backoff_s=[float(x) for x in d.get("reconnect_backoff_s", [5, 10, 20, 60])],
+        idle_detection_timeout_s=float(d.get("idle_detection_timeout_s", 0.0)),
     )
 
 

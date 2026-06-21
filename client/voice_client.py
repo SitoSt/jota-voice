@@ -21,6 +21,60 @@ _HERE = Path(__file__).resolve().parent  # .../client
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
+
+def _apply_termux_hosts() -> None:
+    """Parchea socket.getaddrinfo para leer el /etc/hosts de Termux.
+
+    Android usa bionic como libc, que delega la resolución al DNS daemon del
+    sistema (netd). Ese daemon solo lee /system/etc/hosts (requiere root).
+    Este patch intercepta getaddrinfo/gethostbyname ANTES de que lleguen a
+    bionic para cubrir primero la tabla local de Termux.
+    Es un no-op si el fichero no existe (funciona en Mac/Linux normales).
+    """
+    import socket
+
+    TERMUX_HOSTS = "/data/data/com.termux/files/usr/etc/hosts"
+    _table: dict[str, str] = {}
+    try:
+        with open(TERMUX_HOSTS) as fh:
+            for line in fh:
+                line = line.split("#")[0].strip()
+                parts = line.split()
+                if len(parts) >= 2:
+                    ip = parts[0]
+                    for name in parts[1:]:
+                        _table[name.lower()] = ip
+    except FileNotFoundError:
+        return
+
+    if not _table:
+        return
+
+    _orig_getaddrinfo = socket.getaddrinfo
+
+    def _getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):  # noqa: A002
+        if isinstance(host, str):
+            host = _table.get(host.lower(), host)
+        return _orig_getaddrinfo(host, port, family, type, proto, flags)
+
+    socket.getaddrinfo = _getaddrinfo
+
+    _orig_gethostbyname = socket.gethostbyname
+
+    def _gethostbyname(hostname):
+        if isinstance(hostname, str):
+            hostname = _table.get(hostname.lower(), hostname)
+        return _orig_gethostbyname(hostname)
+
+    socket.gethostbyname = _gethostbyname
+
+    logging.getLogger(__name__).debug(
+        "Termux hosts aplicados: %d entradas", len(_table)
+    )
+
+
+_apply_termux_hosts()
+
 try:
     import pyaudio
 except ImportError:

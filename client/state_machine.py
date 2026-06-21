@@ -32,6 +32,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 async def _idle(
+    cfg: Config,
     bus: EventBus,
     audio: AudioCapture,
     oww: OWWClient,
@@ -46,6 +47,8 @@ async def _idle(
     5. Task B (implícito): wait_for_detection() — cuando completa, cancela A.
 
     Returns el nombre del wake word detectado.
+    Si cfg.oww.idle_detection_timeout_s > 0 y OWW no detecta en ese tiempo,
+    lanza asyncio.TimeoutError (que el caller convierte en evento error).
     """
     q = audio.get_queue()
 
@@ -60,10 +63,18 @@ async def _idle(
     # 2. Publicar state_changed
     bus.publish(VoiceEvent(type="state_changed", data={"state": "idle"}))
 
-    # 3. Reconectar OWW si no está conectado
-    if not oww.is_connected:
-        log.info("IDLE: reconectando OWW…")
-        await oww.connect_with_backoff()
+    # 3. Desconectar OWW para resetear su estado interno (contadores de activación)
+    #    y esperar a que el eco acústico del altavoz se extinga antes de escuchar.
+    if oww.is_connected:
+        await oww.disconnect()
+        await asyncio.sleep(1.0)
+
+    # 4. Vaciar frames acumulados durante el sleep antes de conectar
+    while not q.empty():
+        q.get_nowait()
+
+    log.info("IDLE: reconectando OWW…")
+    await oww.connect_with_backoff()
 
     # 4. Task A: enviar audio a OWW en loop
     async def _send_audio_loop() -> None:
@@ -74,9 +85,10 @@ async def _idle(
             ).astype(np.int16).tobytes()
             await oww.send_audio(pcm16)
 
+    timeout = cfg.oww.idle_detection_timeout_s or None
     task_a = asyncio.create_task(_send_audio_loop())
     try:
-        wake_word = await oww.wait_for_detection()
+        wake_word = await asyncio.wait_for(oww.wait_for_detection(), timeout=timeout)
         log.info("IDLE: wake word detectado → %r", wake_word)
         return wake_word
     finally:
@@ -92,6 +104,7 @@ async def _recording(
     bus: EventBus,
     audio: AudioCapture,
     gateway: GatewayClient,
+    playback: PlaybackEngine,
     cfg: Config,
 ) -> None:
     """
@@ -147,6 +160,9 @@ async def _recording(
             silence_count = 0
     else:
         log.info("RECORDING: timeout absoluto alcanzado (%.1fs)", cfg.audio.recording_timeout_s)
+
+    # Notificación inmediata: señal de que el sistema ha capturado la petición
+    await playback.play_notification()
 
     # 5. Señal de fin
     await gateway.send_end()
@@ -212,6 +228,23 @@ async def _responding(
 
 
 # ---------------------------------------------------------------------------
+# Helpers de error handling
+# ---------------------------------------------------------------------------
+
+def _log_error(state: str, exc: Exception, bus: EventBus) -> None:
+    log.error("Error en estado %s: %s", state, exc)
+    bus.publish(VoiceEvent(type="error", data={"message": str(exc)}))
+
+
+async def _cleanup(gateway: GatewayClient, playback: PlaybackEngine) -> None:
+    try:
+        await gateway.disconnect()
+    except Exception:
+        pass
+    playback.reset()
+
+
+# ---------------------------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------------------------
 
@@ -237,18 +270,13 @@ async def run(
         # ----------------------------------------------------------------
         state = "IDLE"
         try:
-            wake_word = await _idle(bus, audio, oww)
+            wake_word = await _idle(cfg, bus, audio, oww)
         except asyncio.CancelledError:
             log.info("StateMachine: cancelado en IDLE")
             raise
         except Exception as exc:
-            log.error("Error en estado %s: %s", state, exc)
-            bus.publish(VoiceEvent(type="error", data={"message": str(exc)}))
-            try:
-                await gateway.disconnect()
-            except Exception:
-                pass
-            playback.reset()
+            _log_error(state, exc, bus)
+            await _cleanup(gateway, playback)
             continue  # → volver a IDLE
 
         # ----------------------------------------------------------------
@@ -256,22 +284,14 @@ async def run(
         # ----------------------------------------------------------------
         state = "RECORDING"
         try:
-            await _recording(wake_word, bus, audio, gateway, cfg)
+            await _recording(wake_word, bus, audio, gateway, playback, cfg)
         except asyncio.CancelledError:
             log.info("StateMachine: cancelado en RECORDING")
-            try:
-                await gateway.disconnect()
-            except Exception:
-                pass
+            await _cleanup(gateway, playback)
             raise
         except Exception as exc:
-            log.error("Error en estado %s: %s", state, exc)
-            bus.publish(VoiceEvent(type="error", data={"message": str(exc)}))
-            try:
-                await gateway.disconnect()
-            except Exception:
-                pass
-            playback.reset()
+            _log_error(state, exc, bus)
+            await _cleanup(gateway, playback)
             continue  # → volver a IDLE
 
         # ----------------------------------------------------------------
@@ -284,13 +304,7 @@ async def run(
             log.info("StateMachine: cancelado en RESPONDING")
             raise
         except Exception as exc:
-            log.error("Error en estado %s: %s", state, exc)
-            bus.publish(VoiceEvent(type="error", data={"message": str(exc)}))
+            _log_error(state, exc, bus)
         finally:
-            # Desconectar gateway y resetear playback siempre al salir de RESPONDING
-            try:
-                await gateway.disconnect()
-            except Exception:
-                pass
-            playback.reset()
+            await _cleanup(gateway, playback)
         # → volver a IDLE (siguiente iteración del while)

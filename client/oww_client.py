@@ -7,6 +7,7 @@ JSON-lines-over-TCP protocol and reports wake-word detections.
 import asyncio
 import json
 import logging
+import os
 from typing import Optional
 
 from config import OWWConfig
@@ -102,16 +103,20 @@ class OWWClient:
                     await self._reader.readexactly(msg["payload_length"])
                 if msg.get("type") == "detection":
                     name = msg.get("data", {}).get("name", "")
-                    # OWW envía "ok_nabu_v0.1"; config tiene "ok_nabu" — tolerar versión
+                    # OWW envía el path completo del modelo, e.g.
+                    # "/data/.../models/ok_nabu_v0.1.tflite" o solo "ok_nabu_v0.1".
+                    # Comparamos también contra el stem del basename para cubrir ambos casos.
+                    stem = os.path.splitext(os.path.basename(name))[0]
                     matched = next(
                         (ww for ww in self._cfg.wake_words
-                         if name == ww or name.startswith(ww + "_")),
+                         if name == ww or name.startswith(ww + "_")
+                         or stem == ww or stem.startswith(ww + "_")),
                         None,
                     )
                     if matched:
                         log.info("Wake word detectado: %s", name)
                         return matched
-                    log.debug("Detección ignorada (no configurada): %s", name)
+                    log.info("Detección ignorada (no configurada): name=%r stem=%r", name, stem)
         except (OSError, asyncio.IncompleteReadError, ConnectionError):
             self._connected = False
             raise
