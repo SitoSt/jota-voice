@@ -9,7 +9,8 @@ _check() {
 }
 
 _apply() {
-    if [ ! -d "$VENV" ]; then
+    if [ ! -f "$VENV/bin/pip" ]; then
+        [ -d "$VENV" ] && rm -rf "$VENV"
         _info "Creando venv con --system-site-packages"
         python -m venv --system-site-packages "$VENV"
     fi

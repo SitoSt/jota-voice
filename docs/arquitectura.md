@@ -10,7 +10,7 @@ Huawei P8 Lite (LineageOS 18.1) como satélite de voz en Home Assistant, usando 
 
 | Servicio | Host | Puerto | Estado | Descripción |
 |---|---|---|---|---|
-| **wyoming-satellite** | 192.168.1.129 (teléfono) | 10700 | ✅ | Captura micrófono, Wyoming Protocol |
+| **wyoming-satellite** | <IP_TELEFONO> (teléfono) | 10700 | ✅ | Captura micrófono, Wyoming Protocol |
 | **wyoming-openwakeword** | worker-01.local (Docker) | 10400 | ✅ | Wake word "ok nabu" |
 | **Home Assistant** | worker-01.local | 8123 | ✅ | Orquestador domótico, detecta el satélite |
 | **nginx** | green-house | 80 / 443 | ✅ | Proxy inverso único para todos los servicios |
@@ -20,17 +20,17 @@ Huawei P8 Lite (LineageOS 18.1) como satélite de voz en Home Assistant, usando 
 | **jota-gateway (BFF)** | green-house | 8004 | ⚠️ | BFF — será el bridge OpenClaw↔OpenAI REST |
 | **jota-speaker** | green-house | 8005 | ❌ | TTS streaming (parado) |
 | **Ollama** | green-house | 11434 | ✅ | LLM local. Modelos: Qwen3.5-4B (x2) |
-| **Google Home Mini** | 192.168.1.103 | — | ✅ | Altavoz Cast (en HA) |
+| **Google Home Mini** | <IP_ALTAVOZ> | — | ✅ | Altavoz Cast (en HA) |
 
-> **green-house** = 192.168.1.106 (IP dinámica, DNS local resuelve `green-house`)  
-> Acceso externo vía Cloudflare Tunnel → `green-house.alfonsogarre.com`
+> **green-house** = <IP_SERVIDOR> (IP dinámica, DNS local resuelve `green-house`)  
+> Acceso externo vía Cloudflare Tunnel → `green-house.mi-dominio.com`
 
 ---
 
 ## Topología de red
 
 ```
-[Teléfono - 192.168.1.129]
+[Teléfono - <IP_TELEFONO>]
   wyoming-satellite :10700
        │ Wyoming Protocol
        ▼
@@ -45,7 +45,7 @@ Huawei P8 Lite (LineageOS 18.1) como satélite de voz en Home Assistant, usando 
        │
        └──► TTS  ──► jota-speaker :8005 (parado) / ElevenLabs / HA built-in
 
-[green-house - 192.168.1.106]
+[green-house - <IP_SERVIDOR>]
   nginx :80 / :443 → proxy inverso
   OpenClaw gateway :18789 (loopback)
   jota-transcriber :8003 (0.0.0.0)
@@ -120,7 +120,7 @@ Configurado en `/etc/cloudflared/config.yml` en green-house.
 
 | Hostname | Destino |
 |---|---|
-| `green-house.alfonsogarre.com` | `https://127.0.0.1:443` (nginx) |
-| `ssh.alfonsogarre.com` | `ssh://127.0.0.1:22` |
+| `green-house.mi-dominio.com` | `https://127.0.0.1:443` (nginx) |
+| `ssh.mi-dominio.com` | `ssh://127.0.0.1:22` |
 
-`j.alfonsogarre.com` existe en DNS de CF pero no tiene regla en el túnel — no se usa.
+`j.mi-dominio.com` existe en DNS de CF pero no tiene regla en el túnel — no se usa.

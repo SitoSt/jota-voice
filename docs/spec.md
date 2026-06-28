@@ -281,7 +281,7 @@ Dataclasses + YAML. Sin Pydantic (no compila en ARM sin Rust).
 
 ```yaml
 gateway:
-  host: "192.168.1.106"
+  host: "<IP_SERVIDOR>"
   port: 8004
   path: "/ws/stream"
   client_key: "RELLENAR"
@@ -334,7 +334,7 @@ Sin Pydantic — usar dataclasses stdlib.
 | D2 | Audio TTS: PCM16 mono 24kHz sin header |
 | D3 | Sin barge-in en v1. OWW se pausa durante reproducción |
 | D4 | VAD por RMS. `webrtcvad` como mejora futura |
-| D5 | Cliente DB: `jota-voice-phone`, key `e8e6feac-d044-4cbf-9dca-2bb074887055` |
+| D5 | Cliente DB: `jota-voice-phone`, key generada al registrar el dispositivo |
 | D6 | wyoming-satellite coexiste temporalmente |
 | D7 | Sin Pydantic — dataclasses stdlib (Rust no disponible en ARM) |
 | D8 | Event bus interno como asyncio Queues — no librería externa |

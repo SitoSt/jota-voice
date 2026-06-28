@@ -102,14 +102,14 @@ cmd_init() {
     # 2. Hosts (opcional)
     echo ""
     _info "¿Quieres añadir entradas de hosts para resolucion de nombres?"
-    _info "Ejemplo: worker-01 -> 192.168.1.109"
+    _info "Ejemplo: mi-servidor -> 192.168.X.X"
     printf "¿Añadir hosts? [s/N]: "
     read -r resp
     if [ "$resp" = "s" ] || [ "$resp" = "S" ]; then
         _add_host() {
-            printf "  IP (ej: 192.168.1.106): "
+            printf "  IP (ej: 192.168.X.X): "
             read -r _ip
-            printf "  Nombre (ej: green-house): "
+            printf "  Nombre (ej: mi-servidor): "
             read -r _name
             if [ -n "$_ip" ] && [ -n "$_name" ]; then
                 # Añadir al config.yaml

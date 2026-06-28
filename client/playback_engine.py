@@ -44,6 +44,7 @@ class PlaybackEngine:
         self._stream: pyaudio.Stream | None = None
 
         self._text_buffer: list[str] = []
+        self._text_cursor: float = 0.0
         self._play_lock: asyncio.Lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
@@ -53,18 +54,43 @@ class PlaybackEngine:
     def push_token(self, content: str) -> None:
         if content:
             self._text_buffer.append(content)
-            self._bus.publish(
-                VoiceEvent(type="display_text_update", data={"text": "".join(self._text_buffer)})
-            )
 
     async def play_chunk(self, audio: bytes) -> None:
         if not audio:
             return
 
+        audio_duration = len(audio) / (_SAMPLE_RATE * _SAMPLE_WIDTH)
+        tick = 0.05  # 50ms por tick
+        n_ticks = max(1, round(audio_duration / tick))
+        bytes_per_tick = len(audio) // n_ticks
+
+        total_chars = sum(len(t) for t in self._text_buffer)
+        pending_chars = total_chars - int(self._text_cursor)
+        chars_per_second = (
+            pending_chars / audio_duration
+            if audio_duration > 0 and pending_chars > 0
+            else 0.0
+        )
+        full_text = "".join(self._text_buffer)
+
         async with self._play_lock:
             self._ensure_stream()
             loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, self._stream.write, audio)
+
+            for i in range(n_ticks):
+                start = i * bytes_per_tick
+                end = start + bytes_per_tick if i < n_ticks - 1 else len(audio)
+                await loop.run_in_executor(None, self._stream.write, audio[start:end])
+
+                if chars_per_second > 0:
+                    self._text_cursor = min(
+                        self._text_cursor + chars_per_second * tick,
+                        float(total_chars),
+                    )
+                visible = full_text[: int(self._text_cursor)]
+                self._bus.publish(
+                    VoiceEvent(type="display_text_update", data={"text": visible})
+                )
 
     async def play_notification(self) -> None:
         """Reproduce un sonido de notificación (señal de fin de captura de voz).
@@ -99,6 +125,7 @@ class PlaybackEngine:
 
     def reset(self) -> None:
         self._text_buffer.clear()
+        self._text_cursor = 0.0
 
     def close(self) -> None:
         """Cierra el stream PyAudio si está abierto."""

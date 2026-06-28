@@ -32,7 +32,7 @@ El token de auth está en `~/.openclaw/openclaw.json` → `gateway.auth`.
 
 La app nativa de OpenClaw para macOS abre automáticamente un SSH tunnel:
 ```
-ssh -L 18789:127.0.0.1:18789 sito@ssh.alfonsogarre.com
+ssh -L 18789:127.0.0.1:18789 usuario@tu-servidor-ssh.com
 ```
 Luego accede al dashboard en `http://127.0.0.1:18789/` localmente.  
 No requiere ninguna configuración manual.

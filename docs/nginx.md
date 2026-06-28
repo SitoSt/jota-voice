@@ -6,7 +6,7 @@
 /etc/nginx/
 ├── nginx.conf                    # config principal (no tocar)
 ├── certs/
-│   ├── server.crt                # cert mkcert (SANs: green-house.local, localhost, 192.168.1.105)
+│   ├── server.crt                # cert mkcert (SANs: green-house.local, localhost, <IP_SERVIDOR>)
 │   └── server.key
 ├── includes/
 │   └── api-locations.conf        # ← rutas compartidas entre HTTP y HTTPS
@@ -14,7 +14,7 @@
     └── server-hub.conf           # ← único fichero activo
 ```
 
-`openclaw.conf` fue eliminado (código muerto — `j.alfonsogarre.com` no tenía regla en CF tunnel ni cert válido).
+`openclaw.conf` fue eliminado (código muerto — el hostname externo no tenía regla en CF tunnel ni cert válido).
 
 ---
 
@@ -67,9 +67,9 @@ OpenClaw tiene `proxy_read_timeout 3600s` por sesiones largas de agente.
 ## Certificado SSL
 
 Generado con `mkcert` (desarrollo). No es de confianza pública.  
-SANs actuales: `green-house.local`, `greenhouse.local`, `localhost`, `192.168.1.105`
+SANs actuales: `green-house.local`, `greenhouse.local`, `localhost`, `<IP_SERVIDOR>`
 
-**Nota:** la IP dinámica actual es `192.168.1.106` — el cert tiene `.105` (IP anterior).  
+**Nota:** la IP dinámica actual es `<IP_SERVIDOR>` — el cert tiene `.105` (IP anterior).  
 Para HTTPS desde la LAN se recomienda usar `green-house.local` (está en los SANs) o regenerar el cert añadiendo la IP actual.
 
 Para regenerar:
@@ -77,7 +77,7 @@ Para regenerar:
 mkcert -cert-file /etc/nginx/certs/server.crt \
        -key-file  /etc/nginx/certs/server.key \
        green-house.local greenhouse.local localhost \
-       192.168.1.106 127.0.0.1
+       <IP_SERVIDOR> 127.0.0.1
 sudo systemctl reload nginx
 ```
 

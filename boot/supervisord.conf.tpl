@@ -29,8 +29,8 @@ priority=1
 command=%(ENV_HOME)s/oww-venv/bin/python3 -u -m wyoming_openwakeword
     --uri tcp://0.0.0.0:10401
     --model ok_nabu
-    --threshold 0.2
-    --trigger-level 1
+    --threshold 0.5
+    --trigger-level 3
 directory=%(ENV_HOME)s
 environment=PYTHONUNBUFFERED="1"
 stdout_logfile=%(ENV_HOME)s/oww.log

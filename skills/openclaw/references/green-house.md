@@ -1,14 +1,14 @@
-# OpenClaw — green-house Deployment
+# OpenClaw — Server Deployment
 
 ## Server Facts
 
 | Item | Value |
 |------|-------|
-| Hostname | `green-house` |
-| LAN IP | `192.168.1.106` (dynamic — local DNS resolves `green-house`) |
-| External | `green-house.alfonsogarre.com` via Cloudflare Tunnel |
-| SSH | `ssh.alfonsogarre.com` via Cloudflare Tunnel |
-| User | `sito` (sudo requires password — no NOPASSWD) |
+| Hostname | `mi-servidor` |
+| LAN IP | `<IP_SERVIDOR>` (dynamic — local DNS resolves `mi-servidor`) |
+| External | `mi-servidor.mi-dominio.com` via Cloudflare Tunnel |
+| SSH | `ssh.mi-dominio.com` via Cloudflare Tunnel |
+| User | `mi-usuario` (sudo requires password — no NOPASSWD) |
 | OS | Ubuntu 24.04 LTS headless |
 
 ## OpenClaw Process
@@ -37,9 +37,9 @@ Get token: `openclaw doctor --generate-gateway-token`
 | Path | Protocol | Accessible from |
 |------|----------|-----------------|
 | `127.0.0.1:18789` | WebSocket + HTTP REST | Loopback only (direct) |
-| `http://green-house/api/openclaw/` | HTTP | LAN only (nginx proxy) |
-| `http://green-house/api/gateway/v1/` | HTTP | LAN only (jota-gateway bridge) |
-| `https://green-house.alfonsogarre.com/api/openclaw/` | HTTPS | External via Cloudflare |
+| `http://mi-servidor/api/openclaw/` | HTTP | LAN only (nginx proxy) |
+| `http://mi-servidor/api/gateway/v1/` | HTTP | LAN only (jota-gateway bridge) |
+| `https://mi-servidor.mi-dominio.com/api/openclaw/` | HTTPS | External via Cloudflare |
 
 ## nginx Proxy
 
@@ -51,7 +51,7 @@ To add nginx → OpenClaw calls need Bearer token, either:
 - Use `trusted-proxy` mode in OpenClaw (recommended — loopback auto-approves)
 - Let jota-gateway inject the token programmatically
 
-## All Services on green-house
+## All Services on the Server
 
 | Service | Port | Listen | Status |
 |---------|------|--------|--------|
@@ -69,28 +69,25 @@ To add nginx → OpenClaw calls need Bearer token, either:
 `/etc/cloudflared/config.yml`
 
 ```yaml
-tunnel: 513ed5b6-fe3c-44ee-bbef-cb7b51fd29a7
+tunnel: <TUNNEL_UUID>
 ingress:
-  - hostname: green-house.alfonsogarre.com
+  - hostname: mi-servidor.mi-dominio.com
     service: https://127.0.0.1:443
     originRequest:
       noTLSVerify: true
-  - hostname: ssh.alfonsogarre.com
+  - hostname: ssh.mi-dominio.com
     service: ssh://127.0.0.1:22
   - service: http_status:404
 ```
 
-`j.alfonsogarre.com` — exists in CF DNS but has no tunnel ingress rule. Not used.
-
 ## SSL Certificate
 
-Self-signed mkcert cert. SANs: `green-house.local`, `greenhouse.local`, `localhost`, `192.168.1.105`  
-Note: cert has `.105` (old IP), current is `.106`. Use `green-house.local` for LAN HTTPS.
+Self-signed mkcert cert. SANs: `mi-servidor.local`, `localhost`, `<IP_SERVIDOR>`
 
 Regenerate if needed:
 ```bash
 mkcert -cert-file /etc/nginx/certs/server.crt \
        -key-file  /etc/nginx/certs/server.key \
-       green-house.local localhost 192.168.1.106 127.0.0.1
+       mi-servidor.local localhost <IP_SERVIDOR> 127.0.0.1
 sudo systemctl reload nginx
 ```

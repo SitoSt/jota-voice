@@ -1,12 +1,12 @@
 gateway:
-  host: "192.168.1.106"
+  host: "192.168.X.X"       # IP del servidor donde corre jota-gateway
   port: 8004
   path: "/ws/stream"
-  client_key: "RELLENAR"
+  client_key: "RELLENAR"    # client_key del dispositivo en el servidor
   connect_timeout_s: 10
 
 oww:
-  host: "192.168.1.109"
+  host: "127.0.0.1"         # OWW en el mismo dispositivo → localhost
   port: 10401
   wake_words:
     - "ok_nabu"
@@ -26,13 +26,13 @@ display:
   timeout_s: 2.0
 
 hosts:
-  - ip: "192.168.1.106"
-    name: "green-house"
-  - ip: "192.168.1.109"
-    name: "worker-01"
+  - ip: "192.168.X.X"
+    name: "mi-servidor"     # nombre del host en /etc/hosts del dispositivo
+  - ip: "192.168.X.X"
+    name: "mi-asistente"
 
 phone:
-  name: "hab_sito"
+  name: "mi-dispositivo"    # nombre único para identificar este teléfono
 
 logging:
   level: "INFO"

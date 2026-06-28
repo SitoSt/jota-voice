@@ -70,7 +70,7 @@ Generate: `openclaw doctor --generate-gateway-token`
 See `references/green-house.md` for full deployment details.
 
 Key facts:
-- Server: `green-house` (192.168.1.106 dynamic, local DNS resolves `green-house`)
+- Server: `mi-servidor` (<IP_SERVIDOR> dynamic, local DNS resolves `mi-servidor`)
 - Process: `node openclaw/dist/index.js gateway --port 18789`
 - LAN proxy: `http://green-house/api/openclaw/` → nginx → :18789
 - HA bridge: `http://green-house/api/gateway/v1/` → jota-gateway → OpenClaw REST

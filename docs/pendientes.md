@@ -51,7 +51,7 @@
   - El servidor HTTPS usa cert autofirmado → Chrome muestra warning
   - Solución A: usuario acepta el cert una vez en Chrome y añade PWA a inicio
   - Solución B: proxy por nginx de green-house (ya tiene SSL válido)
-  - URL actual: `https://192.168.1.109:8443/`
+  - URL actual: `https://<IP_ASISTENTE>:8443/`
 
 - [ ] **Kiosk — apagado automático de pantalla tras respuesta**
   - Ya implementado en `kiosk_server.py`: `AUTO_SLEEP_SECONDS = 8`

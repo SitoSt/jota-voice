@@ -18,3 +18,9 @@ devices/*.env
 
 # pytest
 .pytest_cache/
+
+# Carpeta de Claude Code (settings locales con permisos y rutas personales)
+.claude/
+
+# Planes y specs de desarrollo (internos, no para el repo público)
+docs/superpowers/

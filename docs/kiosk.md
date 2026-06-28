@@ -9,14 +9,14 @@ y respuesta, se apaga sola tras unos segundos.
 ## Arquitectura
 
 ```
-Teléfono (192.168.1.129)
-  wyoming-satellite → hook scripts → POST http://192.168.1.109:8766/state
+Teléfono (<IP_TELEFONO>)
+  wyoming-satellite → hook scripts → POST http://<IP_ASISTENTE>:8766/state
                                           ↓
                                worker-01: kiosk-server.py
                                  • actualiza estado SSE
                                  • adb shell KEYCODE_WAKEUP / KEYCODE_SLEEP
 
-  Chrome → https://192.168.1.109:8443/
+  Chrome → https://<IP_ASISTENTE>:8443/
                ← GET /events (SSE stream)  ← animaciones en tiempo real
 ```
 
@@ -24,8 +24,8 @@ Teléfono (192.168.1.129)
 
 ## Servicio en worker-01
 
-**Archivo:** `/home/sito/kiosk_server.py`
-**Archivos estáticos:** `/home/sito/index.html`, `/home/sito/manifest.json`
+**Archivo:** `/home/tu-usuario/kiosk_server.py`
+**Archivos estáticos:** `/home/tu-usuario/index.html`, `/home/tu-usuario/manifest.json`
 **Servicio systemd:** `~/.config/systemd/user/kiosk-server.service`
 
 ```ini
@@ -34,11 +34,11 @@ Description=Jota Voice Kiosk Server
 After=network.target
 
 [Service]
-ExecStartPre=/usr/bin/adb connect 192.168.1.129:32906
-ExecStart=/usr/bin/python3 /home/sito/kiosk_server.py
+ExecStartPre=/usr/bin/adb connect <IP_TELEFONO>:32906
+ExecStart=/usr/bin/python3 /home/tu-usuario/kiosk_server.py
 Restart=always
 RestartSec=5
-Environment=HOME=/home/sito
+Environment=HOME=/home/tu-usuario
 
 [Install]
 WantedBy=default.target
@@ -48,7 +48,7 @@ WantedBy=default.target
 - `:8766` HTTP — para los hook scripts del teléfono (POST /state)
 - `:8443` HTTPS — para el browser (Chrome necesita HTTPS para PWA standalone)
 
-**Certificado SSL autofirmado** en `/home/sito/kiosk_cert.pem` y `kiosk_key.pem`
+**Certificado SSL autofirmado** en `/home/tu-usuario/kiosk_cert.pem` y `kiosk_key.pem`
 (generado con SAN para IP, caduca en 10 años).
 
 **Comandos útiles:**
@@ -66,13 +66,13 @@ journalctl --user -u kiosk-server -f
 El teléfono tiene **Depuración inalámbrica** activa. Worker-01 usa las mismas claves ADB
 del Mac (copiadas en `~/.android/`), así que conecta sin re-emparejar.
 
-**Puerto de conexión ADB:** `192.168.1.129:32906`
+**Puerto de conexión ADB:** `<IP_TELEFONO>:32906`
 (puerto TLS del wireless debugging; estable mientras esté activo el ajuste en el teléfono)
 
 **Reconectar si se pierde:**
 ```bash
-adb connect 192.168.1.129:32906
-adb -s 192.168.1.129:32906 shell input keyevent KEYCODE_WAKEUP
+adb connect <IP_TELEFONO>:32906
+adb -s <IP_TELEFONO>:32906 shell input keyevent KEYCODE_WAKEUP
 ```
 
 El servicio `kiosk-server` hace `ExecStartPre=adb connect` automáticamente al arrancar.
@@ -99,14 +99,14 @@ adb -t 1 shell ss -tlnp | grep -v 127
 | `on_transcript.sh "$1"` | STT completo | POST `{"state":"thinking","text":"..."}` |
 | `on_synthesize.sh "$1"` | Respuesta lista para TTS | POST `{"state":"response","text":"..."}` |
 
-Todos hacen POST a `http://192.168.1.109:8766/state` en background (`&`).
+Todos hacen POST a `http://<IP_ASISTENTE>:8766/state` en background (`&`).
 
 El servidor al recibir `listening` → `adb KEYCODE_WAKEUP` (enciende pantalla).
 Al recibir `response` → programa `KEYCODE_SLEEP` con 8 segundos de delay (`AUTO_SLEEP_SECONDS`).
 
 **Redesplegar hooks desde el Mac:**
 ```bash
-cd /Users/alfonsogarre/Workspace/jota-voice/kiosk
+cd /ruta/a/jota-voice/kiosk
 bash deploy.sh
 ```
 
@@ -138,7 +138,7 @@ bash deploy.sh
 **Layout:** Grid CSS que se adapta a horizontal (orb izquierda, texto derecha) y vertical.
 
 **PWA:** `manifest.json` con `display: standalone`. Requiere:
-1. Navegar a `https://192.168.1.109:8443/` en Chrome
+1. Navegar a `https://<IP_ASISTENTE>:8443/` en Chrome
 2. Aceptar certificado autofirmado (Avanzado → Continuar)
 3. Chrome ⋮ → "Añadir a pantalla de inicio"
 4. Abrir desde el icono → sin barra de navegación
@@ -156,15 +156,15 @@ no-resolv
 no-hosts
 server=8.8.8.8
 server=8.8.4.4
-address=/worker-01/192.168.1.109
-listen-address=192.168.1.109
+address=/worker-01/<IP_ASISTENTE>
+listen-address=<IP_ASISTENTE>
 bind-interfaces
 ```
 
 **IMPORTANTE:** `DNSStubListener=yes` en `/etc/systemd/resolved.conf` debe estar activo
 (no `=no`). Si se desactiva, Docker pierde DNS y el TTS de HA deja de funcionar.
 
-Para que el teléfono use este DNS: WiFi → red → Avanzado → DNS 1 → `192.168.1.109`.
+Para que el teléfono use este DNS: WiFi → red → Avanzado → DNS 1 → `<IP_ASISTENTE>`.
 (No funcionó en la prueba inicial; por ahora el teléfono usa la IP directa.)
 
 ---
@@ -205,13 +205,13 @@ tail -30 ~/wyoming-satellite.log
 
 # ¿Openwakeword responde?
 # Desde el Mac:
-nc -z -w 2 192.168.1.129 10401 && echo "OK" || echo "CAÍDO"
+nc -z -w 2 <IP_TELEFONO> 10401 && echo "OK" || echo "CAÍDO"
 
 # ¿Kiosk server en worker-01?
 systemctl --user status kiosk-server
 
 # ¿ADB conectado?
-adb -s 192.168.1.129:32906 shell echo ok
+adb -s <IP_TELEFONO>:32906 shell echo ok
 
 # ¿HA puede hacer TTS? (DNS Docker)
 docker exec homeassistant python3 -c \
