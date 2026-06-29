@@ -58,6 +58,12 @@ class GatewayClient:
         await self._ws.send(json.dumps({"type": "end"}))
         log.debug("Gateway: enviado end")
 
+    async def send_cancel(self) -> None:
+        if self._ws is None:
+            raise RuntimeError("GatewayClient: no conectado")
+        await self._ws.send(json.dumps({"type": "cancel"}))
+        log.debug("Gateway: enviado cancel")
+
     async def send_text(self, text: str) -> None:
         """Envía la transcripción confirmada al gateway para disparar el orquestador."""
         if self._ws is None:
