@@ -190,6 +190,10 @@ async def _responding(
     playback: PlaybackEngine,
     cancel_event: asyncio.Event,
 ) -> None:
+    # Limpiar cualquier cancel pendiente del turn anterior o de /cancel
+    # recibido fuera de contexto — si quedó seteado, el wait() siguiente
+    # completaría inmediatamente y abortaría el turn sin reproducir respuesta.
+    cancel_event.clear()
     playback_started = False
 
     async def _receive_loop() -> None:
