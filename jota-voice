@@ -49,7 +49,9 @@ _rsync() {
     sshpass -p "$PHONE_PASS" rsync -av \
         -e "ssh -o StrictHostKeyChecking=no -p $PHONE_PORT" \
         --exclude='.git' --exclude='.venv' --exclude='__pycache__' \
-        --exclude='devices/' \
+        --exclude='.claude' --exclude='.agents' \
+        --exclude='devices/' --exclude='scripts/' \
+        --exclude='*.pyc' --exclude='*.log' \
         "$@"
 }
 
@@ -225,27 +227,48 @@ cmd_restart() {
 
 cmd_update() {
     _check_sshpass
-    local full=0
-    [ "${1:-}" = "--full" ] && full=1
 
     _info "[$DEVICE_NAME] Sincronizando código..."
     _ssh "mkdir -p $PHONE_DIR"
     _rsync "$REPO_DIR/" "$PHONE_HOST:$PHONE_DIR/"
 
-    if [ $full -eq 1 ]; then
-        _info "[$DEVICE_NAME] Aplicando install steps (06-configs, 07-boot)..."
-        _ssh "cd $PHONE_DIR && REPO_DIR='$PHONE_DIR' bash -c '
-            source \"\$REPO_DIR/lib/output.sh\"
-            source \"\$REPO_DIR/lib/yaml.sh\"
-            source install/06-configs.sh
-            source install/07-boot.sh
-        '"
-    fi
+    # rsync -a debería preservar permisos, pero en la práctica entre Mac y
+    # Termux (Android) los pierde. Aplicamos chmod explícito post-sync a
+    # los archivos que necesitan ser ejecutables (uno por uno, porque chmod
+    # falla en bloque si hay archivos con permisos restrictivos).
+    _info "[$DEVICE_NAME] Aplicando permisos..."
+    _ssh "chmod +x ~/jota-voice/boot/sles-source-loader.sh 2>/dev/null
+          chmod +x ~/jota-voice/boot/lib/notify.sh 2>/dev/null
+          chmod +x ~/jota-voice/install/*.sh 2>/dev/null
+          true"
 
-    _info "[$DEVICE_NAME] Recargando supervisord..."
-    _ssh "supervisorctl -c ~/supervisord.conf reread && supervisorctl -c ~/supervisord.conf update" || true
-    _info "[$DEVICE_NAME] Reiniciando servicios..."
-    _ssh "supervisorctl -c ~/supervisord.conf restart jota-voice oww sles-source pulseaudio"
+    # Aplicar install steps que generan ficheros de sistema desde el repo
+    # (hook de Termux:Boot, supervisord.conf, etc.). Esto SIEMPRE, no solo
+    # con --full: el usuario espera que update propague todos los cambios.
+    # Usamos bash explícito porque los scripts usan "source" (builtin bash).
+    _info "[$DEVICE_NAME] Aplicando install steps (06-configs, 07-boot)..."
+    _ssh "cd $PHONE_DIR && REPO_DIR='$PHONE_DIR' bash -c '
+        source \"\$REPO_DIR/lib/output.sh\"
+        source install/06-configs.sh
+        source install/07-boot.sh
+    '"
+
+    # Reiniciar servicios SECUENCIALMENTE para evitar races con PID files
+    # (pulseaudio deja daemon running si arrancas dos a la vez).
+    _info "[$DEVICE_NAME] Reiniciando servicios (secuencial)..."
+    _ssh "supervisorctl -c ~/supervisord.conf stop jota-voice oww sles-source pulseaudio 2>&1 || true"
+    sleep 2
+    # Limpieza profunda: matar zombies de pulseaudio y borrar PID files
+    _ssh "pkill -9 -f 'pulseaudio|python.*voice_client|wyoming_openwakeword|python.*server' 2>/dev/null || true
+          rm -f ~/.pulse/pulseaudio.pid ~/.pulse/*-runtime 2>/dev/null
+          sleep 2"
+    # Arrancar en orden de prioridad (pulseaudio base, luego el resto)
+    _ssh "supervisorctl -c ~/supervisord.conf start pulseaudio"
+    sleep 3
+    _ssh "supervisorctl -c ~/supervisord.conf start sles-source oww jota-voice jota-display"
+    sleep 5
+    _ssh "supervisorctl -c ~/supervisord.conf status"
+
     _ok "[$DEVICE_NAME] Actualizado"
 }
 
@@ -291,7 +314,7 @@ Uso:
   jota-voice status
   jota-voice logs [jota-voice|oww|jota-display|supervisord|boot]
   jota-voice restart [jota-voice|oww|jota-display]
-  jota-voice update [--full]
+  jota-voice update
   jota-voice adb-port
 
   # Varios dispositivos (nombre obligatorio):
