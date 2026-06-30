@@ -131,6 +131,13 @@ async def main(config_path: str) -> None:
 
     cancel_event = asyncio.Event()
 
+    # --- Task background permanente: OWW (detección persistente de wake word) ---
+    # OWW escucha continuamente durante toda la vida de jota-voice y publica
+    # wake_word_detected en el bus. El state_machine lo consume desde IDLE y
+    # también lo monitoriza en RECORDING/RESPONDING para permitir interrumpir
+    # el TTS con una nueva wake word (estilo Alexa/Google).
+    oww_task = asyncio.create_task(oww.run_forever(audio, bus), name="oww_listener")
+
     # --- Task background permanente: DisplayClient ---
     display_task = asyncio.create_task(display.run(), name="display")
 
@@ -141,7 +148,7 @@ async def main(config_path: str) -> None:
 
     # --- Task principal: StateMachine ---
     sm_task = asyncio.create_task(
-        sm_run(cfg, bus, audio, oww, gateway, playback, cancel_event), name="state_machine"
+        sm_run(cfg, bus, audio, gateway, playback, cancel_event), name="state_machine"
     )
 
     # stop_event.wait() es una coroutine; hay que envolverla en task para
@@ -159,19 +166,28 @@ async def main(config_path: str) -> None:
     finally:
         log.info("Apagando jota-voice…")
 
-        # Cancelar state machine y display si siguen vivos
+        # Cancelar todas las tasks si siguen vivas
         sm_task.cancel()
+        oww_task.cancel()
         display_task.cancel()
         control_task.cancel()
         stop_task.cancel()
 
-        await asyncio.gather(sm_task, display_task, control_task, stop_task, return_exceptions=True)
+        await asyncio.gather(
+            sm_task, oww_task, display_task, control_task, stop_task,
+            return_exceptions=True,
+        )
 
         # Teardown de recursos en orden inverso a su creación
         await audio.stop()
 
         try:
             await gateway.disconnect()
+        except Exception:
+            pass
+
+        try:
+            await oww.disconnect()
         except Exception:
             pass
 

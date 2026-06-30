@@ -6,6 +6,12 @@ Toda la lógica de negocio vive aquí; no hace I/O directamente.
 
 Estados: IDLE → RECORDING → RESPONDING → IDLE
 
+OWW corre como task background persistente (ver oww_client.run_forever):
+- Publica VoiceEvent(type="wake_word_detected") en el bus cuando detecta
+- IDLE consume ese evento del bus para empezar nuevo turn
+- RECORDING/RESPONDING monitorizan el bus y cancelan el turn actual si llega
+  otro wake_word (wake word interrumpe TTS, estilo Alexa/Google)
+
 Publica en EventBus en cada transición y en cada evento relevante.
 Toda transición de error publica VoiceEvent(type="error") antes de volver a IDLE.
 """
@@ -46,24 +52,22 @@ async def _idle(
     cfg: Config,
     bus: EventBus,
     audio: AudioCapture,
-    oww: OWWClient,
+    cancel_event: asyncio.Event,
 ) -> str:
     """
-    Estado IDLE: escucha el micrófono y espera detección de wake word.
+    Estado IDLE: espera wake_word_detected del bus y devuelve el nombre.
 
-    1. Drena la queue de frames stale para evitar false-positives.
-    2. Publica state_changed("idle").
-    3. Reconecta OWW si es necesario.
-    4. Task A: envía audio a OWW en loop.
-    5. Task B (implícito): wait_for_detection() — cuando completa, cancela A.
+    OWW corre como task background persistente (oww_client.run_forever) y
+    publica wake_word_detected en el bus cuando detecta. IDLE consume ese
+    evento. Esto permite que OWW siga escuchando durante RECORDING/RESPONDING
+    y pueda interrumpir el turno actual.
 
-    Returns el nombre del wake word detectado.
-    Si cfg.oww.idle_detection_timeout_s > 0 y OWW no detecta en ese tiempo,
-    lanza asyncio.TimeoutError (que el caller convierte en evento error).
+    Limpia el cancel_event por si quedó seteado de un /cancel externo o de
+    una wake_word recibida mientras estábamos en otro estado.
     """
     q = audio.get_queue()
 
-    # 1. Drenar audio stale ANTES de publicar para no contaminar otros módulos
+    # 1. Drenar audio stale para evitar que frames pre-wake contaminen la captura
     drained = 0
     while not q.empty():
         q.get_nowait()
@@ -71,43 +75,67 @@ async def _idle(
     if drained:
         log.debug("IDLE: descartados %d frames stale", drained)
 
-    # 2. Publicar state_changed
+    # 2. Limpiar cualquier cancel pendiente
+    cancel_event.clear()
+
+    # 3. Publicar state_changed("idle")
     bus.publish(VoiceEvent(type="state_changed", data={"state": "idle"}))
+    log.info("IDLE: esperando wake_word del bus…")
 
-    # 3. Desconectar OWW para resetear su estado interno (contadores de activación)
-    #    y esperar a que el eco acústico del altavoz se extinga antes de escuchar.
-    if oww.is_connected:
-        await oww.disconnect()
-        await asyncio.sleep(1.0)
+    # 4. Suscribirse al bus y esperar primer wake_word_detected
+    async for event in bus.subscribe():
+        if event.type == "wake_word_detected":
+            wake_word = event.data.get("wake_word", "")
+            log.info("IDLE: wake word recibido → %r", wake_word)
+            return wake_word
 
-    # 4. Vaciar frames acumulados durante el sleep antes de conectar
-    while not q.empty():
-        q.get_nowait()
 
-    log.info("IDLE: reconectando OWW…")
-    await oww.connect_with_backoff()
+async def _wait_wake_or_cancel(
+    bus: EventBus,
+    cancel_event: asyncio.Event,
+    current_state: str,
+) -> None:
+    """
+    Bloquea hasta que llegue wake_word_detected al bus o se setee cancel_event.
 
-    # 4. Task A: enviar audio a OWW en loop
-    async def _send_audio_loop() -> None:
-        while True:
-            frame = await q.get()  # float32 bytes
-            pcm16 = (
-                np.frombuffer(frame, np.float32).clip(-1.0, 1.0) * 32767.0
-            ).astype(np.int16).tobytes()
-            await oww.send_audio(pcm16)
-
-    timeout = cfg.oww.idle_detection_timeout_s or None
-    task_a = asyncio.create_task(_send_audio_loop())
+    Usado en RECORDING y RESPONDING para implementar wake-word-interrumpe-TTS:
+    si el usuario dice la wake word mientras jota-voice está grabando o
+    reproduciendo respuesta, esta coroutine retorna, el caller lanza
+    _TurnCancelled, y el state_machine vuelve a IDLE que ya tiene el
+    wake_word en el bus listo para consumir.
+    """
+    cancel_task = asyncio.create_task(cancel_event.wait())
+    wake_task = asyncio.create_task(_consume_wake(bus))
     try:
-        wake_word = await asyncio.wait_for(oww.wait_for_detection(), timeout=timeout)
-        log.info("IDLE: wake word detectado → %r", wake_word)
-        return wake_word
+        done, pending = await asyncio.wait(
+            [cancel_task, wake_task],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for t in pending:
+            t.cancel()
+            try:
+                await t
+            except asyncio.CancelledError:
+                pass
+
+        if wake_task in done and not wake_task.cancelled():
+            log.info("%s: wake_word detectado durante el estado, interrumpiendo", current_state)
+            cancel_event.set()  # para que el state_machine vea _TurnCancelled
     finally:
-        task_a.cancel()
-        try:
-            await task_a
-        except asyncio.CancelledError:
-            pass
+        for t in (cancel_task, wake_task):
+            if not t.done():
+                t.cancel()
+                try:
+                    await t
+                except asyncio.CancelledError:
+                    pass
+
+
+async def _consume_wake(bus: EventBus) -> str:
+    """Lee el bus hasta encontrar wake_word_detected."""
+    async for event in bus.subscribe():
+        if event.type == "wake_word_detected":
+            return event.data.get("wake_word", "")
 
 
 async def _recording(
@@ -162,9 +190,10 @@ async def _recording(
 
     capture_task = asyncio.create_task(_capture_loop())
     cancel_task = asyncio.create_task(cancel_event.wait())
+    wake_task = asyncio.create_task(_wait_wake_or_cancel(bus, cancel_event, "RECORDING"))
 
     done, pending = await asyncio.wait(
-        [capture_task, cancel_task],
+        [capture_task, cancel_task, wake_task],
         return_when=asyncio.FIRST_COMPLETED,
     )
     for t in pending:
@@ -174,7 +203,7 @@ async def _recording(
         except asyncio.CancelledError:
             pass
 
-    if cancel_task in done:
+    if cancel_task in done or wake_task in done:
         await _safe_send_cancel(gateway)
         raise _TurnCancelled()
 
@@ -228,9 +257,10 @@ async def _responding(
         asyncio.wait_for(_receive_loop(), timeout=30.0)
     )
     cancel_task = asyncio.create_task(cancel_event.wait())
+    wake_task = asyncio.create_task(_wait_wake_or_cancel(bus, cancel_event, "RESPONDING"))
 
     done, pending = await asyncio.wait(
-        [receive_task, cancel_task],
+        [receive_task, cancel_task, wake_task],
         return_when=asyncio.FIRST_COMPLETED,
     )
     for t in pending:
@@ -284,7 +314,6 @@ async def run(
     cfg: Config,
     bus: EventBus,
     audio: AudioCapture,
-    oww: OWWClient,
     gateway: GatewayClient,
     playback: PlaybackEngine,
     cancel_event: Optional[asyncio.Event] = None,
@@ -297,7 +326,7 @@ async def run(
     while True:
         state = "IDLE"
         try:
-            wake_word = await _idle(cfg, bus, audio, oww)
+            wake_word = await _idle(cfg, bus, audio, cancel_event)
         except asyncio.CancelledError:
             log.info("StateMachine: cancelado en IDLE")
             raise

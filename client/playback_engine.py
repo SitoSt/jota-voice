@@ -115,13 +115,28 @@ class PlaybackEngine:
 
     async def drain(self) -> None:
         """
-        Espera el fin de reproducción del último chunk.
+        Espera el fin de reproducción del último chunk y cierra el stream.
 
-        Con el diseño actual, play_chunk ya espera internamente que el write
-        termine antes de retornar, por lo que drain() es un no-op salvo que
-        se necesite extender en el futuro.
+        play_chunk ya espera internamente que cada write termine antes de
+        retornar, por lo que el "drain" real es solo cerrar el stream PyAudio.
+
+        ¿Por qué cerrar el stream? Si el stream queda abierto durante
+        minutos (entre turnos de TTS), PyAudio + sles-sink pueden acumular
+        drift y producir glitches/popping audibles ("petardazos") en
+        reproducciones posteriores. Cerrar y reabrir por turno elimina el
+        drift. El coste de reapertura (~5-10ms) es despreciable comparado
+        con la duración de una respuesta TTS.
         """
-        pass
+        async with self._play_lock:
+            if self._stream is not None:
+                try:
+                    loop = asyncio.get_running_loop()
+                    await loop.run_in_executor(None, self._stream.stop_stream)
+                    await loop.run_in_executor(None, self._stream.close)
+                except Exception as exc:
+                    log.warning("PlaybackEngine.drain(): error cerrando stream: %s", exc)
+                finally:
+                    self._stream = None
 
     def reset(self) -> None:
         self._text_buffer.clear()
